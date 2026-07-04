@@ -196,7 +196,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.12 · 04.07.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.13 · 04.07.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
@@ -2190,8 +2190,29 @@ function renderSalesChart(){
     datasets.push({label:'Отмены',data:buckets.map(b=>cancelAgg[b]||0),borderColor:'#DC2626',backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:0.25,borderDash:[3,3]});
   }
   if(salesChartObj) salesChartObj.destroy();
+  // Плагин-перекрестие: вертикальная пунктирная линия на дне под курсором.
+  // Прилипает к ближайшей точке данных (mode:'index'), чтобы было видно, какой именно день читает тултип.
+  const crosshairPlugin={
+    id:'crosshair',
+    afterDatasetsDraw(chart){
+      const active=chart.tooltip&&chart.tooltip.getActiveElements?chart.tooltip.getActiveElements():[];
+      if(!active.length) return;
+      const x=active[0].element.x;
+      const {top,bottom}=chart.chartArea;
+      const ctx=chart.ctx;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(x,top); ctx.lineTo(x,bottom);
+      ctx.lineWidth=1;
+      ctx.setLineDash([4,4]);
+      ctx.strokeStyle='rgba(128,128,128,0.6)';
+      ctx.stroke();
+      ctx.restore();
+    }
+  };
   salesChartObj=new Chart(document.getElementById('salesChart'),{
     type:'line', data:{labels,datasets},
+    plugins:[crosshairPlugin],
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:false},tooltip:{mode:'index',intersect:false,callbacks:{label:c=>`${c.dataset.label}: ${Math.round(c.parsed.y).toLocaleString('ru')}${salesMetric==='revenue'?' ₽':' шт'}`}}},
       scales:{x:{ticks:{maxRotation:45,font:{size:10},autoSkip:true,maxTicksLimit:18},grid:{color:'rgba(128,128,128,0.08)'}},
