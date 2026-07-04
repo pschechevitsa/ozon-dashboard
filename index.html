@@ -196,7 +196,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.10 · 28.06.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.12 · 04.07.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
@@ -237,11 +237,11 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <div id="dashboard" style="display:none"></div>
 
   <div id="sales-section" style="display:none;margin-top:1rem">
-    <input type="file" id="salesFileInput" accept=".csv" style="display:none">
+    <input type="file" id="salesFileInput" accept=".csv,.xlsx" style="display:none">
     <div class="upload-zone" id="sales-dropzone" style="margin-bottom:1rem;cursor:pointer" onclick="document.getElementById('salesFileInput').click()">
       <div class="upload-icon"><svg viewBox="0 0 24 24" stroke-width="1.5"><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12M8 8l4-4 4 4"/></svg></div>
-      <div class="upload-title">Загрузить отчёт по заказам (orders.csv)</div>
-      <div class="upload-sub">FBO/FBS → Заказы → Скачать CSV. Файл обрабатывается локально.</div>
+      <div class="upload-title">Загрузить продажи: xlsx из «Аналитика → Графики» или orders.csv</div>
+      <div class="upload-sub">Аналитика → Графики → детализация по дням → Скачать xlsx (общие продажи FBO+FBS). Файл обрабатывается локально.</div>
     </div>
     <div id="sales-content" style="display:none">
       <div class="block">
@@ -379,6 +379,8 @@ async function saveToCloud(){
     // Если историю явно очистили (salesCleared) — удаляем из облака.
     if(salesDaily) record.salesDaily=salesDaily;
     else if(salesCleared){ delete record.salesDaily; salesCleared=false; }
+    // Выученные автоимена новых товаров — чтобы на других устройствах ключи серий совпадали
+    if(Object.keys(salesNamesX).length) record.salesNames={...(record.salesNames||{}),...salesNamesX};
 
     let body=JSON.stringify(record);
     // Защита от лимита JSONBin (100 КБ на free): если близко — урезаем лог агрессивнее
@@ -420,6 +422,8 @@ async function loadFromCloud(){
     if(rec.adjustments&&rec.adjustments.length>0)localStorage.setItem(LS_ADJ,JSON.stringify(rec.adjustments));
     if(rec.boxes&&rec.boxes.length>0)localStorage.setItem(LS_BOXES,JSON.stringify(rec.boxes));
     if(rec.log&&rec.log.length>0)localStorage.setItem(LS_LOG,JSON.stringify(rec.log));
+    // Выученные автоимена: облачные приоритетнее локальных — они уже вшиты в ключи salesDaily
+    if(rec.salesNames){ salesNamesX={...salesNamesX,...rec.salesNames}; saveSalesNamesX(); }
     // Восстанавливаем данные поставок — компактный формат rawDataC или старый rawData
     let restoredRaw=null;
     if(rec.rawDataC&&rec.rawDataC.length>0){
@@ -1882,8 +1886,35 @@ dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
 dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);});
 
 // ============ ВКЛАДКА ПРОДАЖ ============
-const SALES_NAMES={'PF-СК-D55-WH-PG':'Сырники 5.5','PF-OV-100x60-WH-PG':'Овальные','PF-СК-D70-WH-PG':'Форма 7 см','NZ-HR-3-WH-PG':'Хвост русалки','PF-СК-D55-WH-PGM':'Дубль PGM','PF-ONI-STD-WH-PL':'Онигири'};
-const SALES_COLORS={'Сырники 5.5':'#1D9E75','Овальные':'#534AB7','Форма 7 см':'#D85A30','Хвост русалки':'#C2410C','Дубль PGM':'#0891B2','Онигири':'#9333EA'};
+const SALES_NAMES={'PF-СК-D55-WH-PG':'Сырники 5.5','PF-OV-100x60-WH-PG':'Овальные','PF-СК-D70-WH-PG':'Форма 7 см','NZ-HR-3-WH-PG':'Хвост русалки','PF-СК-D55-WH-PGM':'Дубль PGM','PF-ONI-STD-WH-PL':'Онигири','PF-СК-D60-WH-PG':'Сырники 6 см','PF-SQ-D55-WH-PG':'Квадратная 5.5','NZ-HR-AZ-3-WH-PG':'Хвост ажурный','NZ-LILY-3-WH-PG':'Лилии','NZ-PELM-3-WH-PG':'Пельмени','PF-Burger–105':'Бургер 10.5','Apat77':'Форма 7 А','KC-TG-30x30-PG':'NFC брелок','AD-EU-WH-PG':'Евроадаптер'};
+const SALES_COLORS={'Сырники 5.5':'#1D9E75','Овальные':'#534AB7','Форма 7 см':'#D85A30','Хвост русалки':'#C2410C','Дубль PGM':'#0891B2','Онигири':'#9333EA','Сырники 6 см':'#65A30D','Квадратная 5.5':'#0D9488','Хвост ажурный':'#EA580C','Лилии':'#DB2777','Пельмени':'#7C3AED','Бургер 10.5':'#B45309','Форма 7 А':'#DC2626','NFC брелок':'#475569','Евроадаптер':'#64748B'};
+
+// ===== АВТОИМЕНА И АВТОЦВЕТА ДЛЯ НОВЫХ ТОВАРОВ =====
+// Новые артикулы получают короткое имя из колонки «Товары» файла автоматически.
+// Выученные имена живут в localStorage и синхронизируются через облако (record.salesNames).
+let salesNamesX={};
+try{ salesNamesX=JSON.parse(localStorage.getItem('ozon_sales_names')||'{}'); }catch{ salesNamesX={}; }
+function saveSalesNamesX(){ localStorage.setItem('ozon_sales_names',JSON.stringify(salesNamesX)); }
+function salesName(art){ return SALES_NAMES[art]||salesNamesX[art]||art; }
+// Короткое имя: первый сегмент полного названия до запятой, максимум 28 символов
+function learnSalesName(art,fullName){
+  if(SALES_NAMES[art]||salesNamesX[art]||!fullName) return;
+  let short=String(fullName).split(',')[0].trim();
+  if(!short) return;
+  if(short.length>28) short=short.slice(0,28).trim()+'…';
+  // Защита от коллизий: если имя уже занято другим артикулом — дописываем хвост артикула
+  const taken=new Set([...Object.values(SALES_NAMES),...Object.values(salesNamesX)]);
+  if(taken.has(short)) short=short+' ('+String(art).slice(-6)+')';
+  salesNamesX[art]=short;
+  saveSalesNamesX();
+}
+// Автоцвет: детерминированный по имени — одинаковый на всех устройствах, хранить не нужно
+const AUTO_PALETTE=['#2563EB','#059669','#D97706','#DC2626','#7C3AED','#DB2777','#0891B2','#65A30D','#EA580C','#4F46E5','#0D9488','#B45309','#9333EA','#16A34A','#E11D48'];
+function salesColor(name){
+  if(SALES_COLORS[name]) return SALES_COLORS[name];
+  let h=0; for(let i=0;i<name.length;i++){ h=(h*31+name.charCodeAt(i))>>>0; }
+  return AUTO_PALETTE[h%AUTO_PALETTE.length];
+}
 let salesRaw=null, salesDaily=null, salesGran='day', salesMetric='qty', salesPeriodDays=0, salesCleared=false;
 let salesHidden=new Set(), salesChartObj=null, showCancels=false;
 
@@ -1931,7 +1962,7 @@ function parseSalesCsv(text){
     const date=clean(c[ci.date]).slice(0,10);
     const art=clean(c[ci.art]);
     if(!date||!art) continue;
-    const name=SALES_NAMES[art]||art;
+    const name=salesName(art);
     const qty=parseInt(clean(c[ci.qty])||'1')||1;
     const price=parseFloat(clean(c[ci.price]).replace(',','.'))||0;
     rows.push({date,name,qty,revenue:qty*price,cancelled});
@@ -1939,58 +1970,133 @@ function parseSalesCsv(text){
   return rows;
 }
 
+// Парсер xlsx «Аналитика → Графики → По товарам» (общие продажи FBO+FBS по дням).
+// Принимает массив строк листа (header:1), возвращает агрегат {дата:{товар:{q,r,qc,rc}}}.
+// Особенности отчёта: двухуровневая шапка (метрики во второй строке), строка описаний,
+// строка «Итого», дубли артикул+день (нулевая строка-артефакт разбивки по схемам — суммируем).
+function parseSalesRows(rows){
+  let hi=-1;
+  for(let i=0;i<Math.min(rows.length,20);i++){
+    const r=(rows[i]||[]).map(c=>String(c==null?'':c));
+    if(r.some(c=>c.includes('Артикул'))&&r.some(c=>c.trim()==='День')){hi=i;break;}
+  }
+  if(hi<0||hi+1>=rows.length) return null;
+  const top=(rows[hi]||[]).map(c=>String(c==null?'':c));
+  const sub=(rows[hi+1]||[]).map(c=>String(c==null?'':c).replace(/\n/g,' '));
+  const artC=top.findIndex(c=>c.includes('Артикул'));
+  const dayC=top.findIndex(c=>c.trim()==='День');
+  const prodC=top.findIndex(c=>c.trim()==='Товары'); // полное название — источник автоимени
+  const find=s=>sub.findIndex(c=>c.toLowerCase().includes(s.toLowerCase()));
+  const ordC=find('Заказано товаров'), cancC=find('Отменено товаров'), sumC=find('Заказано на сумму');
+  if(artC<0||dayC<0||ordC<0) return null;
+  const num=v=>typeof v==='number'?v:(parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.'))||0);
+  const toDate=v=>{
+    if(v==null||v==='') return null;
+    if(typeof v==='number'){ const d=new Date(Math.round((v-25569)*86400000)); return isNaN(d)?null:d.toISOString().slice(0,10); }
+    const m=String(v).match(/\d{4}-\d{2}-\d{2}/); return m?m[0]:null;
+  };
+  // Сначала суммируем БРУТТО (заказано, отменено, сумма) по SKU+дню — дубли строк одного дня
+  // могут раскладывать заказы и отмены по разным строкам, поэтому чистые считаем ПОСЛЕ агрегации.
+  const acc={};
+  for(let i=hi+2;i<rows.length;i++){
+    const r=rows[i]; if(!r||!r.length) continue;
+    const date=toDate(r[dayC]); if(!date) continue; // отсекает описания и «Итого»
+    const art=String(r[artC]==null?'':r[artC]).trim(); if(!art) continue;
+    if(prodC>=0) learnSalesName(art,r[prodC]); // новый артикул → короткое имя из названия товара
+    const name=salesName(art);
+    if(!acc[date])acc[date]={};
+    if(!acc[date][name])acc[date][name]={qt:0,qc:0,rev:0};
+    const a=acc[date][name];
+    a.qt+=num(r[ordC]); // «Заказано товаров» включает отмены — q+qc стабильна для защиты граничного дня
+    a.qc+=cancC>=0?num(r[cancC]):0;
+    a.rev+=sumC>=0?num(r[sumC]):0;
+  }
+  const incoming={};
+  Object.keys(acc).forEach(date=>{
+    incoming[date]={};
+    Object.keys(acc[date]).forEach(name=>{
+      const a=acc[date][name];
+      const qc=Math.min(a.qc,a.qt), q=a.qt-qc;
+      const price=a.qt>0?a.rev/a.qt:0;
+      incoming[date][name]={q,r:Math.round(q*price),qc,rc:Math.round(qc*price)};
+    });
+  });
+  return Object.keys(incoming).length?incoming:null;
+}
+
+// Общее слияние загруженного агрегата с накопленной историей + сохранение и перерисовка.
+function applySalesIncoming(incoming){
+  // СЛИЯНИЕ ПО ДАТАМ: дни из нового файла обновляют историю, остальное сохраняется.
+  // Защита от частичного граничного дня: если в новом файле день содержит МЕНЬШЕ заказов,
+  // чем уже есть в истории, считаем его неполным (хвост выгрузки) и НЕ затираем полные данные.
+  const before = salesDaily ? Object.keys(salesDaily).length : 0;
+  if(!salesDaily) salesDaily={};
+  const dayTotal = day => Object.values(day||{}).reduce((s,c)=>s+(c.q||0)+(c.qc||0),0);
+  let updated=0, added=0, skipped=0;
+  Object.keys(incoming).forEach(date=>{
+    const incTotal = dayTotal(incoming[date]);
+    const existTotal = dayTotal(salesDaily[date]);
+    if(salesDaily[date]){
+      // День уже есть: заменяем только если новый файл даёт не меньше данных (полнее или равно).
+      // Частичный хвост (меньше заказов) — пропускаем, чтобы не стереть полный день.
+      if(incTotal >= existTotal){ salesDaily[date]=incoming[date]; updated++; }
+      else { skipped++; }
+    }else{
+      salesDaily[date]=incoming[date]; added++;
+    }
+  });
+  const after = Object.keys(salesDaily).length;
+
+  salesHidden=new Set();
+  rebuildSalesFromDaily(); // пересобираем график из объединённого salesDaily
+  scheduleSave(); // сохраняем объединённый агрегат в облако
+
+  // Сообщаем, что произошло слияние
+  const dates=Object.keys(incoming).sort();
+  let msg=`Загружено ${dates[0]}–${dates[dates.length-1]}: обновлено ${updated}, добавлено ${added}`;
+  if(skipped) msg+=`, пропущено неполных дней ${skipped}`;
+  msg+=`. Всего в истории: ${after} дней (было ${before}).`;
+  cloudDiag(msg);
+}
+
 function handleSalesFile(file){
   const reader=new FileReader();
-  reader.onload=e=>{
-    const rows=parseSalesCsv(e.target.result);
-    if(!rows||!rows.length){ alert('Не удалось распознать файл. Нужен CSV отчёта по заказам с колонками «Принят в обработку», «Артикул», «Количество».'); return; }
-    salesRaw=rows;
-    // Свёртка нового файла по дням: {дата: {товар: {q, r, qc, rc}}}
-    const incoming={};
-    rows.forEach(r=>{
-      if(!incoming[r.date]) incoming[r.date]={};
-      if(!incoming[r.date][r.name]) incoming[r.date][r.name]={q:0,r:0,qc:0,rc:0};
-      if(r.cancelled){
-        incoming[r.date][r.name].qc+=r.qty;
-        incoming[r.date][r.name].rc+=r.revenue;
-      }else{
-        incoming[r.date][r.name].q+=r.qty;
-        incoming[r.date][r.name].r+=r.revenue;
-      }
-    });
-    // СЛИЯНИЕ ПО ДАТАМ: дни из нового файла обновляют историю, остальное сохраняется.
-    // Защита от частичного граничного дня: если в новом файле день содержит МЕНЬШЕ заказов,
-    // чем уже есть в истории, считаем его неполным (хвост выгрузки) и НЕ затираем полные данные.
-    const before = salesDaily ? Object.keys(salesDaily).length : 0;
-    if(!salesDaily) salesDaily={};
-    const dayTotal = day => Object.values(day||{}).reduce((s,c)=>s+(c.q||0)+(c.qc||0),0);
-    let updated=0, added=0, skipped=0;
-    Object.keys(incoming).forEach(date=>{
-      const incTotal = dayTotal(incoming[date]);
-      const existTotal = dayTotal(salesDaily[date]);
-      if(salesDaily[date]){
-        // День уже есть: заменяем только если новый файл даёт не меньше данных (полнее или равно).
-        // Частичный хвост (меньше заказов) — пропускаем, чтобы не стереть полный день.
-        if(incTotal >= existTotal){ salesDaily[date]=incoming[date]; updated++; }
-        else { skipped++; }
-      }else{
-        salesDaily[date]=incoming[date]; added++;
-      }
-    });
-    const after = Object.keys(salesDaily).length;
-
-    salesHidden=new Set();
-    rebuildSalesFromDaily(); // пересобираем график из объединённого salesDaily
-    scheduleSave(); // сохраняем объединённый агрегат в облако
-
-    // Сообщаем, что произошло слияние
-    const dates=Object.keys(incoming).sort();
-    let msg=`Загружено ${dates[0]}–${dates[dates.length-1]}: обновлено ${updated}, добавлено ${added}`;
-    if(skipped) msg+=`, пропущено неполных дней ${skipped}`;
-    msg+=`. Всего в истории: ${after} дней (было ${before}).`;
-    cloudDiag(msg);
-  };
-  reader.readAsText(file,'utf-8');
+  if(/\.xlsx?$/i.test(file.name)){
+    // Отчёт «Аналитика → Графики»: общие продажи FBO+FBS по дням
+    reader.onload=e=>{
+      let incoming=null;
+      try{
+        const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        incoming=parseSalesRows(XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''}));
+      }catch(err){ console.log('xlsx parse error:',err); }
+      if(!incoming){ alert('Не удалось распознать xlsx. Нужен отчёт «Аналитика → Графики» с детализацией по дням (лист «По товарам», колонки «День», «Артикул», «Заказано товаров»).'); return; }
+      salesRaw=null;
+      applySalesIncoming(incoming);
+    };
+    reader.readAsArrayBuffer(file);
+  }else{
+    reader.onload=e=>{
+      const rows=parseSalesCsv(e.target.result);
+      if(!rows||!rows.length){ alert('Не удалось распознать файл. Нужен CSV отчёта по заказам с колонками «Принят в обработку», «Артикул», «Количество» — или xlsx из «Аналитика → Графики».'); return; }
+      salesRaw=rows;
+      // Свёртка нового файла по дням: {дата: {товар: {q, r, qc, rc}}}
+      const incoming={};
+      rows.forEach(r=>{
+        if(!incoming[r.date]) incoming[r.date]={};
+        if(!incoming[r.date][r.name]) incoming[r.date][r.name]={q:0,r:0,qc:0,rc:0};
+        if(r.cancelled){
+          incoming[r.date][r.name].qc+=r.qty;
+          incoming[r.date][r.name].rc+=r.revenue;
+        }else{
+          incoming[r.date][r.name].q+=r.qty;
+          incoming[r.date][r.name].r+=r.revenue;
+        }
+      });
+      applySalesIncoming(incoming);
+    };
+    reader.readAsText(file,'utf-8');
+  }
 }
 
 // Очистка всей накопленной истории продаж
@@ -2029,7 +2135,7 @@ function getSalesNames(){
 
 function renderSalesToggles(){
   document.getElementById('sales-toggles').innerHTML=getSalesNames().map(name=>{
-    const color=SALES_COLORS[name]||'#888';
+    const color=salesColor(name);
     const on=!salesHidden.has(name);
     return `<button class="sales-toggle ${on?'on':''}" onclick="toggleSalesSeries('${name.replace(/'/g,"\\'")}')"><span class="dot" style="background:${on?color:'transparent'};border:1px solid ${color}"></span>${name}</button>`;
   }).join('');
@@ -2077,7 +2183,7 @@ function renderSalesChart(){
   });
   const labels=buckets.map(b=> salesGran==='week'?b.slice(5).replace('-','.')+' нед':b.slice(5).replace('-','.'));
   const datasets=names.map((n,i)=>{
-    const color=SALES_COLORS[n]||['#534AB7','#1D9E75','#D85A30'][i%3];
+    const color=salesColor(n);
     return {label:n,data:buckets.map(b=>agg[n][b]||0),borderColor:color,backgroundColor:'transparent',borderWidth:2,pointRadius:0,tension:0.25,borderDash:i===1?[6,3]:i===2?[2,2]:[]};
   });
   if(showCancels){
@@ -2094,7 +2200,7 @@ function renderSalesChart(){
   });
   document.getElementById('sales-summary').innerHTML=names.map(n=>{
     const total=Object.values(agg[n]).reduce((a,b)=>a+b,0);
-    const color=SALES_COLORS[n]||'#888';
+    const color=salesColor(n);
     return `<div style="background:var(--bg3);border-radius:8px;padding:10px 14px;border-left:3px solid ${color}"><div style="font-size:11px;color:var(--muted)">${n}</div><div style="font-size:18px;font-weight:500">${Math.round(total).toLocaleString('ru')}${salesMetric==='revenue'?' ₽':' шт'}</div></div>`;
   }).join('');
 }
