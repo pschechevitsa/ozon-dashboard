@@ -196,7 +196,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.13 · 04.07.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.15 · 08.07.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
@@ -296,13 +296,43 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
 </div>
 
 <script>
-const FOCUS=['PF-СК-D55-WH-PG','PF-OV-100x60-WH-PG','PF-СК-D70-WH-PG','NZ-HR-3-WH-PG'];
-const NAMES={'PF-СК-D55-WH-PG':'Сырники 5.5','PF-OV-100x60-WH-PG':'Овальные','PF-СК-D70-WH-PG':'Форма 7 см','NZ-HR-3-WH-PG':'Хвост русалки'};
-const BOX_TYPE={'PF-СК-D55-WH-PG':'a','PF-OV-100x60-WH-PG':'b','PF-СК-D70-WH-PG':'b','NZ-HR-3-WH-PG':'c'};
+// ALL_ARTICLES — все артикулы, найденные в файле доступности (пополняется автоматически при загрузке).
+// FOCUS — те из них, что сейчас показываются (галочки). Всё отображение завязано на FOCUS.
+let ALL_ARTICLES=['PF-СК-D55-WH-PG','PF-OV-100x60-WH-PG','PF-СК-D70-WH-PG','NZ-HR-3-WH-PG','PF-СК-D60-WH-PG','PF-СК-D55-WH-PGM','PF-SQ-D55-WH-PG','PF-ONI-STD-WH-PL','NZ-HR-AZ-3-WH-PG','NZ-LILY-3-WH-PG','PET-SV14-WH-PG'];
+const NAMES={'PF-СК-D55-WH-PG':'Сырники 5.5','PF-OV-100x60-WH-PG':'Овальные','PF-СК-D70-WH-PG':'Форма 7 см','NZ-HR-3-WH-PG':'Хвост русалки','PF-СК-D60-WH-PG':'Сырники 6 см','PF-СК-D55-WH-PGM':'Дубль PGM','PF-SQ-D55-WH-PG':'Квадратная 5.5','PF-ONI-STD-WH-PL':'Онигири','NZ-HR-AZ-3-WH-PG':'Хвост ажурный','NZ-LILY-3-WH-PG':'Лилии','PET-SV14-WH-PG':'Свисток'};
+// Тип коробки для расчёта их остатка. Артикул без типа в расход коробок не попадает — это безопасно.
+const BOX_TYPE={'PF-СК-D55-WH-PG':'a','PF-OV-100x60-WH-PG':'b','PF-СК-D70-WH-PG':'b','NZ-HR-3-WH-PG':'c','PF-СК-D60-WH-PG':'b','PF-СК-D55-WH-PGM':'a','NZ-HR-AZ-3-WH-PG':'c','NZ-LILY-3-WH-PG':'c'};
+// Артикулы, скрытые галочкой. По умолчанию показываем 4 основных — остальные включаются вручную.
+const LS_HIDDEN_ARTICLES='ozon_hidden_articles';
+const DEFAULT_VISIBLE=['PF-СК-D55-WH-PG','PF-OV-100x60-WH-PG','PF-СК-D70-WH-PG','NZ-HR-3-WH-PG'];
+function getHiddenArticles(){
+  try{
+    const raw=localStorage.getItem(LS_HIDDEN_ARTICLES);
+    if(raw===null) return new Set(ALL_ARTICLES.filter(a=>!DEFAULT_VISIBLE.includes(a)));
+    return new Set(JSON.parse(raw));
+  }catch{ return new Set(); }
+}
+function saveHiddenArticles(set){ localStorage.setItem(LS_HIDDEN_ARTICLES,JSON.stringify([...set])); refreshFocus(); scheduleSave(); }
+function toggleHiddenArticle(art){
+  const s=getHiddenArticles();
+  if(s.has(art)) s.delete(art);
+  else { if(FOCUS.length<=1) return; s.add(art); } // хотя бы один товар должен остаться
+  saveHiddenArticles(s);
+  priorityFilters.articles=new Set(FOCUS); // фильтр приоритетов синхронизируем с видимыми
+  redraw();
+}
+let FOCUS=[];
+function artName(art){ return NAMES[art]||art; }
+function refreshFocus(){
+  const hidden=getHiddenArticles();
+  FOCUS=ALL_ARTICLES.filter(a=>!hidden.has(a));
+  if(!FOCUS.length) FOCUS=ALL_ARTICLES.slice(0,1);
+}
+refreshFocus();
 // Мета по типам коробок — порядок отображения, отображаемое имя. Чтобы добавить новый тип — только сюда + в BOX_TYPE.
 const BOX_META={
   a:{name:'Коробки 5.5 см (тип A)'},
-  b:{name:'Коробки с окошком (овальные + 7 см)'},
+  b:{name:'Коробки с окошком (овальные + 7 см + 6 см)'},
   c:{name:'Коробки для насадок'},
 };
 const CLUSTER_GROUPS=[
@@ -381,6 +411,9 @@ async function saveToCloud(){
     else if(salesCleared){ delete record.salesDaily; salesCleared=false; }
     // Выученные автоимена новых товаров — чтобы на других устройствах ключи серий совпадали
     if(Object.keys(salesNamesX).length) record.salesNames={...(record.salesNames||{}),...salesNamesX};
+    // Галочки товаров и список найденных артикулов — чтобы вид совпадал на всех устройствах
+    record.hiddenArticles=[...getHiddenArticles()];
+    record.allArticles=ALL_ARTICLES;
 
     let body=JSON.stringify(record);
     // Защита от лимита JSONBin (100 КБ на free): если близко — урезаем лог агрессивнее
@@ -424,6 +457,11 @@ async function loadFromCloud(){
     if(rec.log&&rec.log.length>0)localStorage.setItem(LS_LOG,JSON.stringify(rec.log));
     // Выученные автоимена: облачные приоритетнее локальных — они уже вшиты в ключи salesDaily
     if(rec.salesNames){ salesNamesX={...salesNamesX,...rec.salesNames}; saveSalesNamesX(); }
+    // Список артикулов и галочки из облака
+    if(Array.isArray(rec.allArticles)) rec.allArticles.forEach(a=>{ if(!ALL_ARTICLES.includes(a)) ALL_ARTICLES.push(a); });
+    if(Array.isArray(rec.hiddenArticles)) localStorage.setItem(LS_HIDDEN_ARTICLES,JSON.stringify(rec.hiddenArticles));
+    refreshFocus();
+    priorityFilters.articles=new Set(FOCUS);
     // Восстанавливаем данные поставок — компактный формат rawDataC или старый rawData
     let restoredRaw=null;
     if(rec.rawDataC&&rec.rawDataC.length>0){
@@ -1204,9 +1242,21 @@ function processRows(rows,useProfile=true){
   const colTransit=findCol(headers,'Товары в пути');
   const profile=useProfile?getProfile():{};
 
-  // Парсим реальные строки из файла
+  // Автоподхват новых артикулов: всё, что есть в файле, попадает в ALL_ARTICLES,
+  // чтобы появлялось в списке галочек. Скрытые фильтруются позже, при отрисовке.
+  rows.forEach(r=>{
+    const a=String(r[colArticle]||'').trim();
+    const c=String(r[colCluster]||'').trim();
+    if(a&&c&&!ALL_ARTICLES.includes(a)) ALL_ARTICLES.push(a);
+  });
+  refreshFocus();
+
+  // Парсим реальные строки из файла (все артикулы — данные не теряем при скрытии)
   const real=rows
-    .filter(r=>FOCUS.includes(String(r[colArticle]||'').trim()))
+    .filter(r=>{
+      const a=String(r[colArticle]||'').trim();
+      return a&&ALL_ARTICLES.includes(a)&&String(r[colCluster]||'').trim();
+    })
     .map(r=>{
       const article=String(r[colArticle]||'').trim();
       const cluster=String(r[colCluster]||'').trim();
@@ -1229,7 +1279,7 @@ function processRows(rows,useProfile=true){
   const realKeys=new Set(real.map(r=>r.article+'|'+r.cluster));
   const virtual=Object.entries(profile)
     .filter(([key])=>!realKeys.has(key))
-    .filter(([key])=>FOCUS.some(art=>key.startsWith(art+'|')))
+    .filter(([key])=>ALL_ARTICLES.some(art=>key.startsWith(art+'|')))
     .map(([key,sales])=>{
       const sep=key.indexOf('|');
       const article=key.slice(0,sep);
@@ -1313,6 +1363,25 @@ function render(data){
 
   let html='';
 
+  // Панель галочек: какие артикулы участвуют в карточках, приоритетах и тепловой карте.
+  // Данные по скрытым товарам остаются в rawData — прячется только отображение.
+  const hiddenArts=getHiddenArticles();
+  const artsWithData=new Set(data.filter(r=>r.sales>0||r.fbo>0||r.transit>0).map(r=>r.article));
+  html+=`<div class="section-label" style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+    <span>Товары в расчёте</span><span style="font-size:11px;color:var(--muted);font-family:var(--mono)">${FOCUS.length} из ${ALL_ARTICLES.length}</span></div>
+  <div class="block" style="padding:0.75rem 1.25rem;margin-bottom:1rem">
+    <div style="display:flex;gap:14px;flex-wrap:wrap">
+      ${ALL_ARTICLES.map(art=>{
+        const on=!hiddenArts.has(art);
+        const noData=!artsWithData.has(art);
+        return `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-family:var(--mono);font-size:12px;color:${on?'var(--text)':'var(--muted)'};opacity:${noData?0.5:1}" title="${noData?'нет данных в текущем файле':art}">
+          <input type="checkbox" ${on?'checked':''} onchange="toggleHiddenArticle('${art}')" style="cursor:pointer;accent-color:var(--accent)">
+          ${artName(art)}${noData?' <span style="font-size:10px">∅</span>':''}
+        </label>`;
+      }).join('')}
+    </div>
+  </div>`;
+
   // Cards
   html+=`<div class="section-label">Покрытие потребности · ${period} дней</div><div class="cards">`;
   FOCUS.forEach(art=>{
@@ -1324,7 +1393,7 @@ function render(data){
     const totalFbo=Math.round(rows.reduce((s,r)=>s+r.fbo,0));
     const totalTransit=Math.round(rows.reduce((s,r)=>s+r.transit,0));
     html+=`<div class="card">
-      <div class="card-label">${NAMES[art]}</div>
+      <div class="card-label">${artName(art)}</div>
       <div class="card-value ${cls}">${Math.round(pct)}%</div>
       <div class="pct-track"><div class="pct-fill ${cls}" style="width:${Math.round(pct)}%"></div></div>
       <div class="card-days">${totalSales.toFixed(1)} шт/день · покрыто ${cov} из ${need} шт</div>
@@ -1345,7 +1414,7 @@ function render(data){
     <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">товар:</span>
     ${FOCUS.map(art=>{
       const active=priorityFilters.articles.has(art);
-      return `<button onclick="toggleArticleFilter('${art}')" style="font-family:var(--mono);font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;border:1px solid ${active?'var(--accent)':'var(--border)'};background:${active?'rgba(91,127,255,0.15)':'none'};color:${active?'var(--accent)':'var(--muted)'}">${NAMES[art]}</button>`;
+      return `<button onclick="toggleArticleFilter('${art}')" style="font-family:var(--mono);font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;border:1px solid ${active?'var(--accent)':'var(--border)'};background:${active?'rgba(91,127,255,0.15)':'none'};color:${active?'var(--accent)':'var(--muted)'}">${artName(art)}</button>`;
     }).join('')}
     <span style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-left:8px">сортировка:</span>
     ${sortOptions.map(o=>{
@@ -1507,7 +1576,7 @@ function render(data){
 
   // Desktop heatmap
   html+='<div class="heatmap-desktop"><div class="heatmap-scroll"><table class="heatmap"><thead><tr><th style="text-align:left;min-width:160px">Кластер</th>';
-  FOCUS.forEach(art=>{html+=`<th class="col-header">${NAMES[art]}</th>`;});
+  FOCUS.forEach(art=>{html+=`<th class="col-header">${artName(art)}</th>`;});
   html+='</tr></thead><tbody>';
   allClusters.forEach(cluster=>{
     html+=`<tr><td class="row-label">${cluster}${markupBadge(cluster)}</td>`;
@@ -1562,7 +1631,7 @@ function render(data){
           <div class="acc-cells">`;
       FOCUS.forEach(art=>{
         const row=data.find(r=>r.article===art&&r.cluster===cluster);
-        const shortName=NAMES[art].split(' ')[0];
+        const shortName=artName(art).split(' ')[0];
         const formId='accf_'+(accFormCounter++);
         if(!row||row.sales===0){
           html+=`<span class="acc-cell none">${shortName} —</span>`;
@@ -1705,7 +1774,7 @@ function exportForClaude(){
       const sales = rows.reduce((s,r)=>s+r.sales,0).toFixed(1);
       const zeroFbo = rows.filter(r=>r.fbo===0&&r.sales>0).length;
       const total = rows.filter(r=>r.sales>0).length;
-      lines.push(`${NAMES[art]}: ${fbo} на складе + ${transit} в пути | ${sales} шт/день | нулей: ${zeroFbo}/${total} кластеров`);
+      lines.push(`${artName(art)}: ${fbo} на складе + ${transit} в пути | ${sales} шт/день | нулей: ${zeroFbo}/${total} кластеров`);
     });
 
     // Топ дефицитов
@@ -1757,7 +1826,7 @@ function buildSnapshot(){
       const sales=rows.reduce((s,r)=>s+r.sales,0).toFixed(1);
       const zero=rows.filter(r=>r.fbo===0&&r.sales>0).length;
       const total=rows.filter(r=>r.sales>0).length;
-      lines.push(`- ${NAMES[art]}: ${fbo} на складе + ${transit} в пути | ${sales} шт/день | нулей: ${zero}/${total} кластеров`);
+      lines.push(`- ${artName(art)}: ${fbo} на складе + ${transit} в пути | ${sales} шт/день | нулей: ${zero}/${total} кластеров`);
     });
 
     lines.push('\nТоп-15 дефицитов (14 дней):');
