@@ -196,7 +196,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.15 · 08.07.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.16 · 25.07.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
@@ -362,6 +362,32 @@ const JSONBIN_URL=`https://api.jsonbin.io/v3/b/${JSONBIN_BIN}`;
 let JSONBIN_KEY='';
 let syncTimer=null;
 
+// Компактный формат salesDaily для облака: {q,r,qc,rc} → [q,r,qc,rc].
+// Экономит ~30% на записи — убирает четыре повторяющихся имени поля на каждую ячейку товар×день.
+// В памяти браузера формат остаётся именованным, это только упаковка для передачи/хранения.
+function compactSalesDaily(sd){
+  const out={};
+  Object.keys(sd).forEach(date=>{
+    out[date]={};
+    Object.keys(sd[date]).forEach(name=>{
+      const c=sd[date][name];
+      out[date][name]=[c.q||0,c.r||0,c.qc||0,c.rc||0];
+    });
+  });
+  return out;
+}
+function expandSalesDaily(compact){
+  const out={};
+  Object.keys(compact).forEach(date=>{
+    out[date]={};
+    Object.keys(compact[date]).forEach(name=>{
+      const a=compact[date][name];
+      out[date][name]=Array.isArray(a)?{q:a[0]||0,r:a[1]||0,qc:a[2]||0,rc:a[3]||0}:a; // старый формат — на всякий случай
+    });
+  });
+  return out;
+}
+
 function setJsonbinKey(key){
   JSONBIN_KEY=key.trim();
   localStorage.setItem('ozon_jsonbin_key',JSONBIN_KEY);
@@ -407,8 +433,8 @@ async function saveToCloud(){
     }
     // salesDaily обновляем только если загружены продажи; иначе сохраняем облачные.
     // Если историю явно очистили (salesCleared) — удаляем из облака.
-    if(salesDaily) record.salesDaily=salesDaily;
-    else if(salesCleared){ delete record.salesDaily; salesCleared=false; }
+    if(salesDaily){ record.salesDailyC=compactSalesDaily(salesDaily); delete record.salesDaily; }
+    else if(salesCleared){ delete record.salesDaily; delete record.salesDailyC; salesCleared=false; }
     // Выученные автоимена новых товаров — чтобы на других устройствах ключи серий совпадали
     if(Object.keys(salesNamesX).length) record.salesNames={...(record.salesNames||{}),...salesNamesX};
     // Галочки товаров и список найденных артикулов — чтобы вид совпадал на всех устройствах
@@ -416,10 +442,21 @@ async function saveToCloud(){
     record.allArticles=ALL_ARTICLES;
 
     let body=JSON.stringify(record);
-    // Защита от лимита JSONBin (100 КБ на free): если близко — урезаем лог агрессивнее
+    // Защита от лимита JSONBin (100 КБ на free). Урезаем по нарастающей, пока не влезем:
+    // 1) лог отправок до 5 записей, 2) старые дни salesDaily (по одному, с конца истории).
+    // Локальный salesDaily в памяти браузера НЕ трогаем — режем только то, что уходит в облако.
+    let trimmedDays=0;
     if(body.length>98000 && record.log && record.log.length>5){
       record.log=record.log.slice(0,5);
       body=JSON.stringify(record);
+    }
+    if(body.length>98000 && record.salesDailyC){
+      const dates=Object.keys(record.salesDailyC).sort(); // старые даты первыми
+      while(body.length>98000 && dates.length>7){ // не режем последнюю неделю ни при каких условиях
+        delete record.salesDailyC[dates.shift()];
+        trimmedDays++;
+        body=JSON.stringify(record);
+      }
     }
     const sizeKB=(body.length/1024).toFixed(1);
     const resp=await fetch(JSONBIN_URL,{
@@ -430,7 +467,9 @@ async function saveToCloud(){
     const s=document.getElementById('cloud-status');
     if(resp.ok){
       if(s){s.textContent='☁ сохранено ✓';s.style.color='var(--green)';}
-      cloudDiag(`Сохранено в облако: ${sizeKB} КБ | поставки: ${record.rawDataC?record.rawDataC.length+' строк':'нет'} | продажи: ${record.salesDaily?Object.keys(record.salesDaily).length+' дней':'нет'}`);
+      let msg=`Сохранено в облако: ${sizeKB} КБ | поставки: ${record.rawDataC?record.rawDataC.length+' строк':'нет'} | продажи: ${record.salesDailyC?Object.keys(record.salesDailyC).length+' дней':'нет'}`;
+      if(trimmedDays>0) msg+=` | ⚠ обрезано ${trimmedDays} старых дней продаж в облаке (в браузере история цела)`;
+      cloudDiag(msg);
     }else{
       const txt=await resp.text().catch(()=>'');
       if(s){s.textContent=`☁ ошибка ${resp.status}`;s.style.color='var(--red)';}
@@ -449,7 +488,8 @@ async function loadFromCloud(){
     // Диагностика: что реально лежит в облаке
     const keys=Object.keys(rec);
     const rawCount = rec.rawDataC ? rec.rawDataC.length : (rec.rawData ? rec.rawData.length : 0);
-    const diag=`Облако: ${keys.length?keys.join(', '):'(пусто)'} | поставки: ${rawCount?rawCount+' строк':'нет'} | продажи: ${rec.salesDaily?Object.keys(rec.salesDaily).length+' дней':'нет'}`;
+    const salesDayCount = rec.salesDailyC ? Object.keys(rec.salesDailyC).length : (rec.salesDaily ? Object.keys(rec.salesDaily).length : 0);
+    const diag=`Облако: ${keys.length?keys.join(', '):'(пусто)'} | поставки: ${rawCount?rawCount+' строк':'нет'} | продажи: ${salesDayCount?salesDayCount+' дней':'нет'}`;
     cloudDiag(diag);
     console.log(diag);
     if(rec.adjustments&&rec.adjustments.length>0)localStorage.setItem(LS_ADJ,JSON.stringify(rec.adjustments));
@@ -484,8 +524,12 @@ async function loadFromCloud(){
     renderLog();
     // Восстанавливаем агрегаты продаж
     let salesRestored=false;
-    if(rec.salesDaily && Object.keys(rec.salesDaily).length){
-      salesDaily=rec.salesDaily;
+    if(rec.salesDailyC && Object.keys(rec.salesDailyC).length){
+      salesDaily=expandSalesDaily(rec.salesDailyC); // новый компактный формат
+      rebuildSalesFromDaily();
+      salesRestored=true;
+    }else if(rec.salesDaily && Object.keys(rec.salesDaily).length){
+      salesDaily=rec.salesDaily; // старый формат — обратная совместимость
       rebuildSalesFromDaily();
       salesRestored=true;
     }
