@@ -196,14 +196,14 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.19 · 28.07.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.20 · 28.07.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
       <div class="period-tabs">
         <button class="period-tab" onclick="setPeriod(7)">7 дн</button>
-        <button class="period-tab active" onclick="setPeriod(14)">14 дн</button>
-        <button class="period-tab" onclick="setPeriod(28)">28 дн</button>
+        <button class="period-tab" onclick="setPeriod(14)">14 дн</button>
+        <button class="period-tab active" onclick="setPeriod(28)">28 дн</button>
       </div>
       <button onclick="getAiRecommendations()" style="font-family:var(--mono);font-size:12px;background:linear-gradient(135deg,#5b4fff,#a855f7);border:none;color:#fff;border-radius:6px;padding:6px 14px;cursor:pointer;letter-spacing:0.02em;position:relative;overflow:hidden" id="ai-btn">✦ рекомендации ИИ</button>
       <button class="reset-btn" onclick="exportForClaude()">↗ экспорт для Claude</button>
@@ -492,6 +492,7 @@ async function saveToCloud(){
     const s=document.getElementById('cloud-status');
     if(resp.ok){
       if(s){s.textContent='☁ сохранено ✓';s.style.color='var(--green)';}
+      localStorage.setItem('ozon_local_saved_at',record.savedAt); // локал и облако теперь в синхроне
       let msg=`Сохранено в облако: ${sizeKB} КБ | поставки: ${record.rawDataC?record.rawDataC.length+' строк':'нет'} | продажи: ${record.salesDailyC?Object.keys(record.salesDailyC).length+' дней':'нет'}`;
       if(trimmedDays>0) msg+=` | ⚠ обрезано ${trimmedDays} старых дней продаж в облаке (в браузере история цела)`;
       cloudDiag(msg);
@@ -517,11 +518,13 @@ async function loadFromCloud(){
     const diag=`Облако: ${keys.length?keys.join(', '):'(пусто)'} | поставки: ${rawCount?rawCount+' строк':'нет'} | продажи: ${salesDayCount?salesDayCount+' дней':'нет'}`;
     cloudDiag(diag);
     console.log(diag);
-    // Свежесть облака: применяем облачные adjustments/boxes/log ТОЛЬКО если облако новее
-    // последнего локального изменения. Иначе устаревшее облако затрёт свежие локальные отправки.
+    // ЕДИНОЕ решение о свежести: облако новее последнего локального изменения?
+    // По нему гейтим ВСЁ — поставки, продажи, отправки, коробки. Если облако старше,
+    // ничего из него не применяем: локальные данные свежее и главнее.
     const localSavedAt=localStorage.getItem('ozon_local_saved_at');
     const cloudSavedAt=rec.savedAt;
     const cloudIsNewer = !localSavedAt || (cloudSavedAt && cloudSavedAt>=localSavedAt);
+    // Свежесть облака: применяем облачные adjustments/boxes/log ТОЛЬКО если облако новее.
     if(cloudIsNewer){
       if(rec.adjustments&&rec.adjustments.length>0)localStorage.setItem(LS_ADJ,JSON.stringify(rec.adjustments));
       if(rec.boxes&&rec.boxes.length>0)localStorage.setItem(LS_BOXES,JSON.stringify(rec.boxes));
@@ -547,10 +550,9 @@ async function loadFromCloud(){
       restoredRaw=rec.rawData; // обратная совместимость со старым форматом
     }
     if(restoredRaw){
-      // Защита: не затираем более полные локальные данные пустым/усечённым облаком.
-      // Облако применяем, только если оно не меньше того, что уже показано локально.
-      const localCount = rawData ? rawData.length : 0;
-      if(restoredRaw.length >= localCount){
+      // Защита по ВРЕМЕНИ: облачные поставки применяем только если облако новее локального
+      // изменения. Иначе старый файл из облака (даже если в нём больше строк) откатит свежий локальный.
+      if(cloudIsNewer || !rawData){
         rawData=restoredRaw;
         if(rec.period)currentPeriod=rec.period;
         populateClusterSelect(rawData);
@@ -560,27 +562,26 @@ async function loadFromCloud(){
         });
         persistLocal(); // синхронизируем локал с тем, что пришло из облака
       }else{
-        cloudDiag(diag+' | ⚠ облако меньше локального — оставлены локальные данные');
+        cloudDiag(diag+' | ⚠ локальные поставки новее облака — оставлены локальные');
       }
     }
     renderLog();
-    // Восстанавливаем агрегаты продаж. Защита та же: облако не затирает более полную
-    // локальную историю. Мёржим по датам — берём объединение, при конфликте дня оставляем локальный.
+    // Восстанавливаем агрегаты продаж. По датам берём ОБЪЕДИНЕНИЕ — это никогда не теряет данные:
+    // дни, которых нет локально, добавляем; при конфликте дня оставляем локальный (он не старше облачного).
     let salesRestored=false;
     let cloudSales=null;
     if(rec.salesDailyC && Object.keys(rec.salesDailyC).length) cloudSales=expandSalesDaily(rec.salesDailyC);
     else if(rec.salesDaily && Object.keys(rec.salesDaily).length) cloudSales=rec.salesDaily;
     if(cloudSales){
-      const localDays = salesDaily ? Object.keys(salesDaily).length : 0;
-      const cloudDays = Object.keys(cloudSales).length;
       if(!salesDaily){
         salesDaily=cloudSales; salesRestored=true;
       }else{
         // мёрж: дни из облака, которых нет локально, добавляем; существующие локальные не трогаем
         let added=0;
         Object.keys(cloudSales).forEach(d=>{ if(!salesDaily[d]){ salesDaily[d]=cloudSales[d]; added++; } });
-        if(added) salesRestored=true;
-        if(cloudDays<localDays) cloudDiag(diag+' | продажи: облако меньше локального, взято объединение');
+        // если облако новее — обновляем и совпадающие дни (там могут быть дозаполненные данные)
+        if(cloudIsNewer) Object.keys(cloudSales).forEach(d=>{ salesDaily[d]=cloudSales[d]; });
+        if(added||cloudIsNewer) salesRestored=true;
       }
       if(salesRestored){ rebuildSalesFromDaily(); persistLocal(); }
     }
@@ -615,7 +616,7 @@ function scheduleSave(){
   },1500);
 }
 
-let currentPeriod=14, rawData=null;
+let currentPeriod=28, rawData=null;
 
 // Единая точка перерисовки — заменяет повторяющийся вызов render(applyAdjustments(rawData)) по коду.
 function redraw(){if(rawData)render(applyAdjustments(rawData));}
@@ -2049,10 +2050,15 @@ function toggleTheme(){
 }
 (()=>{
   const saved=localStorage.getItem(LS_THEME);
-  if(saved==='light'){
+  // По умолчанию светлая тема (если пользователь ещё не выбирал). Тёмная — только если явно сохранена.
+  const theme = saved || 'light';
+  if(theme==='light'){
     document.documentElement.setAttribute('data-theme','light');
     const btn=document.getElementById('theme-btn');
     if(btn)btn.textContent='☾ тёмная';
+  }else{
+    const btn=document.getElementById('theme-btn');
+    if(btn)btn.textContent='☀ светлая';
   }
 })();
 const dz=document.getElementById('dropzone');
