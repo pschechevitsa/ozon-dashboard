@@ -196,7 +196,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.18 · 28.07.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.19 · 28.07.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
@@ -364,6 +364,8 @@ function persistLocal(){
     if(rawData) localStorage.setItem(LS_RAWDATA,JSON.stringify(rawData));
     if(salesDaily) localStorage.setItem(LS_SALESDAILY,JSON.stringify(compactSalesDaily(salesDaily)));
     localStorage.setItem(LS_PERIOD,String(currentPeriod));
+    // Отметка времени последнего локального изменения — по ней решаем, свежее ли облако.
+    localStorage.setItem('ozon_local_saved_at',new Date().toISOString());
   }catch(e){ console.log('persistLocal error (квота localStorage?):',e); }
 }
 function loadLocal(){
@@ -515,9 +517,18 @@ async function loadFromCloud(){
     const diag=`Облако: ${keys.length?keys.join(', '):'(пусто)'} | поставки: ${rawCount?rawCount+' строк':'нет'} | продажи: ${salesDayCount?salesDayCount+' дней':'нет'}`;
     cloudDiag(diag);
     console.log(diag);
-    if(rec.adjustments&&rec.adjustments.length>0)localStorage.setItem(LS_ADJ,JSON.stringify(rec.adjustments));
-    if(rec.boxes&&rec.boxes.length>0)localStorage.setItem(LS_BOXES,JSON.stringify(rec.boxes));
-    if(rec.log&&rec.log.length>0)localStorage.setItem(LS_LOG,JSON.stringify(rec.log));
+    // Свежесть облака: применяем облачные adjustments/boxes/log ТОЛЬКО если облако новее
+    // последнего локального изменения. Иначе устаревшее облако затрёт свежие локальные отправки.
+    const localSavedAt=localStorage.getItem('ozon_local_saved_at');
+    const cloudSavedAt=rec.savedAt;
+    const cloudIsNewer = !localSavedAt || (cloudSavedAt && cloudSavedAt>=localSavedAt);
+    if(cloudIsNewer){
+      if(rec.adjustments&&rec.adjustments.length>0)localStorage.setItem(LS_ADJ,JSON.stringify(rec.adjustments));
+      if(rec.boxes&&rec.boxes.length>0)localStorage.setItem(LS_BOXES,JSON.stringify(rec.boxes));
+      if(rec.log&&rec.log.length>0)localStorage.setItem(LS_LOG,JSON.stringify(rec.log));
+    }else{
+      cloudDiag(diag+' | ⚠ локальные отправки новее облака — оставлены локальные');
+    }
     // Выученные автоимена: облачные приоритетнее локальных — они уже вшиты в ключи salesDaily
     if(rec.salesNames){ salesNamesX={...salesNamesX,...rec.salesNames}; saveSalesNamesX(); }
     // Список артикулов и галочки из облака
