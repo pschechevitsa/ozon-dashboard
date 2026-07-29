@@ -196,7 +196,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.16 · 25.07.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.17 · 28.07.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
@@ -355,6 +355,29 @@ const CLUSTER_MARKUP={
   'Беларусь':6,'Алматы':6,'Астана':6,'Азербайджан':0,'Армения':0,
 };
 const LS_ADJ='ozon_adjustments',LS_PREV='ozon_prev_transit',LS_LOG='ozon_load_log',LS_BOXES='ozon_boxes_log',LS_HIDDEN_GROUPS='ozon_hidden_groups',LS_HIDDEN_CLUSTERS='ozon_hidden_clusters';
+// ЛОКАЛЬНОЕ ХРАНИЛИЩЕ ГЛАВНЫХ ДАННЫХ (первый уровень, не зависит от облака/VPN).
+// Раньше rawData и salesDaily жили только в памяти + облаке — при обновлении страницы
+// до успешной отправки в облако данные пропадали. Теперь пишем их в localStorage сразу.
+const LS_RAWDATA='ozon_rawdata', LS_SALESDAILY='ozon_salesdaily', LS_PERIOD='ozon_period';
+function persistLocal(){
+  try{
+    if(rawData) localStorage.setItem(LS_RAWDATA,JSON.stringify(rawData));
+    if(salesDaily) localStorage.setItem(LS_SALESDAILY,JSON.stringify(compactSalesDaily(salesDaily)));
+    localStorage.setItem(LS_PERIOD,String(currentPeriod));
+  }catch(e){ console.log('persistLocal error (квота localStorage?):',e); }
+}
+function loadLocal(){
+  let loadedAny=false;
+  try{
+    const rd=localStorage.getItem(LS_RAWDATA);
+    if(rd){ const arr=JSON.parse(rd); if(Array.isArray(arr)&&arr.length){ rawData=arr; loadedAny=true; } }
+    const sd=localStorage.getItem(LS_SALESDAILY);
+    if(sd){ const obj=JSON.parse(sd); if(obj&&Object.keys(obj).length){ salesDaily=expandSalesDaily(obj); loadedAny=true; } }
+    const pr=localStorage.getItem(LS_PERIOD);
+    if(pr) currentPeriod=parseInt(pr)||currentPeriod;
+  }catch(e){ console.log('loadLocal error:',e); }
+  return loadedAny;
+}
 
 // ===== JSONBIN =====
 const JSONBIN_BIN='69f3c4ae856a68218990cb6c';
@@ -513,25 +536,42 @@ async function loadFromCloud(){
       restoredRaw=rec.rawData; // обратная совместимость со старым форматом
     }
     if(restoredRaw){
-      rawData=restoredRaw;
-      if(rec.period)currentPeriod=rec.period;
-      populateClusterSelect(rawData);
-      redraw();
-      document.querySelectorAll('.period-tab').forEach(btn=>{
-        btn.classList.toggle('active',btn.textContent.trim()===currentPeriod+' дн');
-      });
+      // Защита: не затираем более полные локальные данные пустым/усечённым облаком.
+      // Облако применяем, только если оно не меньше того, что уже показано локально.
+      const localCount = rawData ? rawData.length : 0;
+      if(restoredRaw.length >= localCount){
+        rawData=restoredRaw;
+        if(rec.period)currentPeriod=rec.period;
+        populateClusterSelect(rawData);
+        redraw();
+        document.querySelectorAll('.period-tab').forEach(btn=>{
+          btn.classList.toggle('active',btn.textContent.trim()===currentPeriod+' дн');
+        });
+        persistLocal(); // синхронизируем локал с тем, что пришло из облака
+      }else{
+        cloudDiag(diag+' | ⚠ облако меньше локального — оставлены локальные данные');
+      }
     }
     renderLog();
-    // Восстанавливаем агрегаты продаж
+    // Восстанавливаем агрегаты продаж. Защита та же: облако не затирает более полную
+    // локальную историю. Мёржим по датам — берём объединение, при конфликте дня оставляем локальный.
     let salesRestored=false;
-    if(rec.salesDailyC && Object.keys(rec.salesDailyC).length){
-      salesDaily=expandSalesDaily(rec.salesDailyC); // новый компактный формат
-      rebuildSalesFromDaily();
-      salesRestored=true;
-    }else if(rec.salesDaily && Object.keys(rec.salesDaily).length){
-      salesDaily=rec.salesDaily; // старый формат — обратная совместимость
-      rebuildSalesFromDaily();
-      salesRestored=true;
+    let cloudSales=null;
+    if(rec.salesDailyC && Object.keys(rec.salesDailyC).length) cloudSales=expandSalesDaily(rec.salesDailyC);
+    else if(rec.salesDaily && Object.keys(rec.salesDaily).length) cloudSales=rec.salesDaily;
+    if(cloudSales){
+      const localDays = salesDaily ? Object.keys(salesDaily).length : 0;
+      const cloudDays = Object.keys(cloudSales).length;
+      if(!salesDaily){
+        salesDaily=cloudSales; salesRestored=true;
+      }else{
+        // мёрж: дни из облака, которых нет локально, добавляем; существующие локальные не трогаем
+        let added=0;
+        Object.keys(cloudSales).forEach(d=>{ if(!salesDaily[d]){ salesDaily[d]=cloudSales[d]; added++; } });
+        if(added) salesRestored=true;
+        if(cloudDays<localDays) cloudDiag(diag+' | продажи: облако меньше локального, взято объединение');
+      }
+      if(salesRestored){ rebuildSalesFromDaily(); persistLocal(); }
     }
     const supplyRestored = !!restoredRaw;
     if(!supplyRestored && salesRestored){
@@ -556,10 +596,11 @@ function cloudDiag(msg){
 // Debounce 1.5 сек: группирует частые клики (✓/×/добавления) в один PUT, защищает от гонок при быстрых действиях.
 let _scheduleSaveTimer=null;
 function scheduleSave(){
+  persistLocal(); // МГНОВЕННО в localStorage — переживёт обновление страницы даже без облака
   clearTimeout(_scheduleSaveTimer);
   _scheduleSaveTimer=setTimeout(()=>{
     _scheduleSaveTimer=null;
-    saveToCloud();
+    saveToCloud(); // облако — с задержкой, как раньше (для синхронизации между устройствами)
   },1500);
 }
 
@@ -1710,6 +1751,7 @@ function resetDashboard(){
   document.getElementById('reset-wrap').style.display='none';
   document.getElementById('fileInput').value='';
   rawData=null;
+  localStorage.removeItem(LS_RAWDATA); // сбрасываем и локальную копию поставок
 }
 
 function handleFile(file){
@@ -1771,7 +1813,13 @@ function applyCloudKey(){
     const btn=document.getElementById('profile-btn');
     if(btn)btn.textContent=`📊 профиль (${count})`;
   }
-  // Загружаем ключ из localStorage если был сохранён
+  // СНАЧАЛА локал — данные появляются мгновенно и переживают обновление без облака/VPN
+  if(loadLocal()){
+    if(rawData){ populateClusterSelect(rawData); redraw();
+      document.querySelectorAll('.period-tab').forEach(btn=>btn.classList.toggle('active',btn.textContent.trim()===currentPeriod+' дн')); }
+    if(salesDaily) rebuildSalesFromDaily();
+  }
+  // Загружаем ключ из localStorage если был сохранён — облако догоняет и синхронизирует
   const savedKey=localStorage.getItem('ozon_jsonbin_key');
   if(savedKey){JSONBIN_KEY=savedKey;testConnection().then(()=>{if(JSONBIN_KEY)loadFromCloud();});}
   else{const s=document.getElementById('cloud-status');if(s){s.textContent='☁ нажми чтобы настроить';s.style.color='var(--muted)';}}
@@ -2216,6 +2264,7 @@ function handleSalesFile(file){
 function clearSalesHistory(){
   if(!confirm('Очистить всю накопленную историю продаж? Данные в облаке тоже обнулятся. Это действие необратимо.')) return;
   salesDaily=null; salesRaw=null; salesHidden=new Set(); salesCleared=true;
+  localStorage.removeItem(LS_SALESDAILY); // чистим и локальную копию
   if(salesChartObj){ salesChartObj.destroy(); salesChartObj=null; }
   document.getElementById('sales-content').style.display='none';
   document.getElementById('sales-dropzone').style.display='';
