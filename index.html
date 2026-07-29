@@ -196,7 +196,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.17 · 28.07.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.18 · 28.07.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
@@ -1813,12 +1813,15 @@ function applyCloudKey(){
     const btn=document.getElementById('profile-btn');
     if(btn)btn.textContent=`📊 профиль (${count})`;
   }
-  // СНАЧАЛА локал — данные появляются мгновенно и переживают обновление без облака/VPN
-  if(loadLocal()){
-    if(rawData){ populateClusterSelect(rawData); redraw();
-      document.querySelectorAll('.period-tab').forEach(btn=>btn.classList.toggle('active',btn.textContent.trim()===currentPeriod+' дн')); }
-    if(salesDaily) rebuildSalesFromDaily();
-  }
+  // СНАЧАЛА локал — данные появляются мгновенно и переживают обновление без облака/VPN.
+  // В try/catch: если рендер упадёт (например, Chart.js не загрузился без VPN) — init не оборвётся.
+  try{
+    if(loadLocal()){
+      if(rawData){ populateClusterSelect(rawData); redraw();
+        document.querySelectorAll('.period-tab').forEach(btn=>btn.classList.toggle('active',btn.textContent.trim()===currentPeriod+' дн')); }
+      if(salesDaily) rebuildSalesFromDaily();
+    }
+  }catch(e){ console.log('Восстановление из локала: часть рендера не удалась (возможно, нет связи с CDN):',e); }
   // Загружаем ключ из localStorage если был сохранён — облако догоняет и синхронизирует
   const savedKey=localStorage.getItem('ozon_jsonbin_key');
   if(savedKey){JSONBIN_KEY=savedKey;testConnection().then(()=>{if(JSONBIN_KEY)loadFromCloud();});}
@@ -2320,6 +2323,15 @@ function isoWeek(dateStr){
 
 function renderSalesChart(){
   if(!salesRaw) return;
+  // Chart.js грузится с CDN — без VPN может не загрузиться. Тогда не роняем страницу,
+  // а показываем данные текстом и подсказку. Всё остальное (поставки, приоритеты) работает.
+  if(typeof Chart==='undefined'){
+    const c=document.getElementById('salesChart');
+    if(c&&c.parentElement){
+      c.parentElement.innerHTML='<div style="padding:2rem;text-align:center;color:var(--muted);font-size:12px;font-family:var(--mono)">График недоступен — не загрузилась библиотека Chart.js (нужен доступ к CDN / VPN).<br>Данные продаж сохранены и в безопасности, таблицы и поставки работают.</div>';
+    }
+    return;
+  }
   let rows=salesRaw;
   const allDates=[...new Set(rows.map(r=>r.date))].sort();
   if(salesPeriodDays>0 && allDates.length){
