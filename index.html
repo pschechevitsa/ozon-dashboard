@@ -196,7 +196,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.20 · 28.07.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.22 · 08.08.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
@@ -534,9 +534,14 @@ async function loadFromCloud(){
     }
     // Выученные автоимена: облачные приоритетнее локальных — они уже вшиты в ключи salesDaily
     if(rec.salesNames){ salesNamesX={...salesNamesX,...rec.salesNames}; saveSalesNamesX(); }
-    // Список артикулов и галочки из облака
-    if(Array.isArray(rec.allArticles)) rec.allArticles.forEach(a=>{ if(!ALL_ARTICLES.includes(a)) ALL_ARTICLES.push(a); });
-    if(Array.isArray(rec.hiddenArticles)) localStorage.setItem(LS_HIDDEN_ARTICLES,JSON.stringify(rec.hiddenArticles));
+    // Список артикулов и галочки из облака — ТОЛЬКО если облако новее (иначе затрёт свежий выбор).
+    if(cloudIsNewer){
+      if(Array.isArray(rec.allArticles)) rec.allArticles.forEach(a=>{ if(!ALL_ARTICLES.includes(a)) ALL_ARTICLES.push(a); });
+      if(Array.isArray(rec.hiddenArticles)) localStorage.setItem(LS_HIDDEN_ARTICLES,JSON.stringify(rec.hiddenArticles));
+    }else{
+      // локальный выбор свежее — но новые артикулы из облака всё равно добавим в список (это не сбрасывает галочки)
+      if(Array.isArray(rec.allArticles)) rec.allArticles.forEach(a=>{ if(!ALL_ARTICLES.includes(a)) ALL_ARTICLES.push(a); });
+    }
     refreshFocus();
     priorityFilters.articles=new Set(FOCUS);
     // Восстанавливаем данные поставок — компактный формат rawDataC или старый rawData
@@ -802,37 +807,43 @@ function savePrevTransit(data){
 function autoCleanAdjs(newData){
   const adjs=getAdjs();
   if(!adjs.length)return;
-  
-  // Группируем отправки по SKU+кластер. sent===false — запланировано, ещё не отправлено физически, не трогаем.
+
+  // Группируем ОТПРАВЛЕННЫЕ отправки по SKU+кластер. sent===false — ещё не отгружено физически, не трогаем.
   const byKey={};
   adjs.forEach((a,idx)=>{
     if(a.sent===false)return;
     const key=a.article+'|'+a.cluster;
     (byKey[key]=byKey[key]||[]).push({...a,idx});
   });
-  
+
   const toRemove=new Set();
-  
-  // Простая логика: «в пути» в файле — это «бюджет». Съедаем отправки FIFO (старые первыми),
-  // чтобы при нескольких отправках в один кластер не списать больше, чем реально в пути.
+  const removedList=[];
+
   for(const key in byKey){
     const [article,cluster]=key.split('|');
     const row=newData.find(r=>r.article===article&&r.cluster===cluster);
     if(!row)continue;
-    let pool=row.transit;
     const sorted=byKey[key].sort((a,b)=>(a.ts||0)-(b.ts||0));
-    for(const a of sorted){
-      if(pool>=a.qty){
-        toRemove.add(a.idx);
-        pool-=a.qty;
+    // Логика прибытия:
+    //  • transit>0 — товар ещё в пути: списываем FIFO ровно на «бюджет» transit (как раньше).
+    //  • transit===0 — товар вышел из пути (уже в FBO-остатке или уже распродан) → отправка завершена,
+    //    убираем её. Это чинит зависание, когда весь цикл «в пути → приехало» прошёл между выгрузками файла.
+    if(row.transit===0){
+      for(const a of sorted){ toRemove.add(a.idx); removedList.push(`${article.split('-').slice(0,2).join('-')} → ${cluster} +${a.qty}`); }
+    }else{
+      let pool=row.transit;
+      for(const a of sorted){
+        if(pool>=a.qty){ toRemove.add(a.idx); pool-=a.qty; }
       }
     }
   }
-  
+
   if(!toRemove.size)return;
   const cleaned=adjs.filter((_,i)=>!toRemove.has(i));
   saveAdjs(cleaned);
   saveToCloud();
+  // Страховка от редкого настоящего недовоза: показываем, что именно авто-убрали.
+  cloudDiag(`Авто-убрано приехавших отправок: ${toRemove.size} (${removedList.slice(0,6).join('; ')}${removedList.length>6?'…':''})`);
 }
 
 function populateClusterSelect(data){
@@ -1393,6 +1404,7 @@ function setPeriod(days){
   document.querySelectorAll('.period-tab').forEach(btn=>{
     btn.classList.toggle('active',btn.textContent.trim()===days+' дн');
   });
+  localStorage.setItem(LS_PERIOD,String(days)); // запоминаем выбор периода
   redraw();
 }
 
