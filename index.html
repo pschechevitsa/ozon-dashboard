@@ -196,7 +196,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.22 · 08.08.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.23 · 08.08.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
@@ -808,10 +808,11 @@ function autoCleanAdjs(newData){
   const adjs=getAdjs();
   if(!adjs.length)return;
 
-  // Группируем ОТПРАВЛЕННЫЕ отправки по SKU+кластер. sent===false — ещё не отгружено физически, не трогаем.
+  // Группируем только ПОДТВЕРЖДЁННЫЕ (sent===true) отправки. Всё остальное — запланировано,
+  // но ещё не отгружено физически (sent может быть false ИЛИ undefined у новых) — не трогаем.
   const byKey={};
   adjs.forEach((a,idx)=>{
-    if(a.sent===false)return;
+    if(a.sent!==true)return;
     const key=a.article+'|'+a.cluster;
     (byKey[key]=byKey[key]||[]).push({...a,idx});
   });
