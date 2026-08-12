@@ -196,7 +196,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.23 · 08.08.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.24 · 08.08.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
@@ -1845,6 +1845,8 @@ function applyCloudKey(){
       if(rawData){ populateClusterSelect(rawData); redraw();
         document.querySelectorAll('.period-tab').forEach(btn=>btn.classList.toggle('active',btn.textContent.trim()===currentPeriod+' дн')); }
       if(salesDaily) rebuildSalesFromDaily();
+      renderLog();   // показать «Лог загрузок» и при восстановлении из локала (без облака/VPN)
+      renderBoxes(); // и коробки тоже
     }
   }catch(e){ console.log('Восстановление из локала: часть рендера не удалась (возможно, нет связи с CDN):',e); }
   // Загружаем ключ из localStorage если был сохранён — облако догоняет и синхронизирует
