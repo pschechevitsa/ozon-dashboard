@@ -196,7 +196,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
   <header>
     <h1>supply.dashboard</h1>
     <span class="tag">ozon FBO/FBS</span>
-    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.23 · 08.08.2026</span>
+    <span class="version" title="Версия сборки — сверяй с задеплоенной на GitHub">v2.25 · 09.08.2026</span>
     <button class="theme-btn" onclick="toggleTheme()" id="theme-btn" style="margin-left:4px">☀ светлая</button>
     <button class="reset-btn" onclick="promptCloudKey()" id="cloud-status" style="font-family:var(--mono);font-size:11px">☁ не настроено</button>
     <div class="header-right" id="reset-wrap" style="display:none">
@@ -301,7 +301,7 @@ tbody tr:hover{background:rgba(255,255,255,0.02);}
 let ALL_ARTICLES=['PF-СК-D55-WH-PG','PF-OV-100x60-WH-PG','PF-СК-D70-WH-PG','NZ-HR-3-WH-PG','PF-СК-D60-WH-PG','PF-СК-D55-WH-PGM','PF-SQ-D55-WH-PG','PF-ONI-STD-WH-PL','NZ-HR-AZ-3-WH-PG','NZ-LILY-3-WH-PG','PET-SV14-WH-PG'];
 const NAMES={'PF-СК-D55-WH-PG':'Сырники 5.5','PF-OV-100x60-WH-PG':'Овальные','PF-СК-D70-WH-PG':'Форма 7 см','NZ-HR-3-WH-PG':'Хвост русалки','PF-СК-D60-WH-PG':'Сырники 6 см','PF-СК-D55-WH-PGM':'Дубль PGM','PF-SQ-D55-WH-PG':'Квадратная 5.5','PF-ONI-STD-WH-PL':'Онигири','NZ-HR-AZ-3-WH-PG':'Хвост ажурный','NZ-LILY-3-WH-PG':'Лилии','PET-SV14-WH-PG':'Свисток'};
 // Тип коробки для расчёта их остатка. Артикул без типа в расход коробок не попадает — это безопасно.
-const BOX_TYPE={'PF-СК-D55-WH-PG':'a','PF-OV-100x60-WH-PG':'b','PF-СК-D70-WH-PG':'b','NZ-HR-3-WH-PG':'c','PF-СК-D60-WH-PG':'b','PF-СК-D55-WH-PGM':'a','NZ-HR-AZ-3-WH-PG':'c','NZ-LILY-3-WH-PG':'c'};
+// BOX_TYPE (артикул→тип коробки) генерируется из BOX_TYPES ниже — не хардкодим.
 // Артикулы, скрытые галочкой. По умолчанию показываем 4 основных — остальные включаются вручную.
 const LS_HIDDEN_ARTICLES='ozon_hidden_articles';
 const DEFAULT_VISIBLE=['PF-СК-D55-WH-PG','PF-OV-100x60-WH-PG','PF-СК-D70-WH-PG','NZ-HR-3-WH-PG'];
@@ -329,12 +329,92 @@ function refreshFocus(){
   if(!FOCUS.length) FOCUS=ALL_ARTICLES.slice(0,1);
 }
 refreshFocus();
-// Мета по типам коробок — порядок отображения, отображаемое имя. Чтобы добавить новый тип — только сюда + в BOX_TYPE.
-const BOX_META={
-  a:{name:'Коробки 5.5 см (тип A)'},
-  b:{name:'Коробки с окошком (овальные + 7 см + 6 см)'},
-  c:{name:'Коробки для насадок'},
-};
+// ===== ТИПЫ КОРОБОК (данные, не хардкод) =====
+// Хранятся как массив {id, name, articles:[...]}. Из него выводятся BOX_TYPE (артикул→тип)
+// и BOX_META (тип→имя). Пользователь добавляет/удаляет типы сам через форму на вкладке поставок.
+const LS_BOX_TYPES='ozon_box_types';
+const DEFAULT_BOX_TYPES=[
+  {id:'a',name:'Коробки 5.5 см',articles:['PF-СК-D55-WH-PG','PF-СК-D55-WH-PGM']},
+  {id:'b',name:'Коробки с окошком (овальные + 6 см)',articles:['PF-OV-100x60-WH-PG','PF-СК-D60-WH-PG']},
+  {id:'c',name:'Коробки для насадок',articles:['NZ-HR-3-WH-PG','NZ-HR-AZ-3-WH-PG','NZ-LILY-3-WH-PG']},
+  {id:'d',name:'Коробки для 7 см',articles:['PF-СК-D70-WH-PG']},
+];
+let BOX_TYPES=[], BOX_TYPE={}, BOX_META={};
+function loadBoxTypes(){
+  try{
+    const raw=localStorage.getItem(LS_BOX_TYPES);
+    BOX_TYPES = raw ? JSON.parse(raw) : JSON.parse(JSON.stringify(DEFAULT_BOX_TYPES));
+  }catch{ BOX_TYPES=JSON.parse(JSON.stringify(DEFAULT_BOX_TYPES)); }
+  rebuildBoxDerived();
+}
+function rebuildBoxDerived(){
+  BOX_TYPE={}; BOX_META={};
+  BOX_TYPES.forEach(t=>{
+    BOX_META[t.id]={name:t.name};
+    (t.articles||[]).forEach(a=>{ BOX_TYPE[a]=t.id; });
+  });
+}
+function saveBoxTypes(){
+  localStorage.setItem(LS_BOX_TYPES,JSON.stringify(BOX_TYPES));
+  rebuildBoxDerived();
+  scheduleSave();
+}
+function addBoxType(name,articles){
+  const id='bt'+Date.now().toString(36); // уникальный id, не конфликтует с a/b/c/d
+  // Артикулы переезжают в новый тип из старых (один артикул — один тип коробки)
+  BOX_TYPES.forEach(t=>{ t.articles=(t.articles||[]).filter(a=>!articles.includes(a)); });
+  BOX_TYPES.push({id,name,articles});
+  saveBoxTypes();
+  redraw();
+}
+function deleteBoxType(id){
+  BOX_TYPES=BOX_TYPES.filter(t=>t.id!==id);
+  saveBoxTypes();
+  redraw();
+}
+// UI управления типами коробок: раскрывающаяся форма под кнопкой «＋ тип коробки».
+function toggleBoxTypeForm(){
+  const el=document.getElementById('box-type-form');
+  if(!el)return;
+  if(el.style.display==='none'){ el.innerHTML=boxTypeFormHtml(); el.style.display='block'; }
+  else { el.style.display='none'; }
+}
+function boxTypeFormHtml(){
+  // Список текущих типов с их артикулами и удалением + форма создания нового типа.
+  const existing=BOX_TYPES.map(t=>{
+    const arts=(t.articles||[]).map(a=>artName(a)).join(', ')||'—';
+    return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span style="font-family:var(--mono);font-size:12px"><b>${t.name}</b> <span style="color:var(--muted)">${arts}</span></span>
+      <button class="adj-del" title="удалить тип" onclick="deleteBoxType('${t.id}')">×</button>
+    </div>`;
+  }).join('');
+  // Чекбоксы артикулов: показываем все, помечаем текущую привязку типа
+  const checks=ALL_ARTICLES.map(a=>{
+    const cur=BOX_TYPE[a]?` <span style="color:var(--muted)">(${(BOX_META[BOX_TYPE[a]]||{}).name||''})</span>`:'';
+    return `<label style="display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:12px;margin:2px 10px 2px 0;cursor:pointer">
+      <input type="checkbox" class="new-box-art" value="${a}" style="accent-color:var(--accent)">${artName(a)}${cur}</label>`;
+  }).join('');
+  return `<div class="block" style="padding:0.75rem 1.25rem;margin-bottom:1rem">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Текущие типы:</div>
+    ${existing}
+    <div style="margin-top:12px;font-size:12px;color:var(--muted)">Новый тип коробки:</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
+      <input type="text" id="new-box-name" placeholder="название (напр. Коробки для 7 см)" style="flex:1;min-width:200px;padding:5px 8px;font-family:var(--mono);font-size:12px">
+    </div>
+    <div style="margin:6px 0">Что паковать в этот тип:<br>${checks}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Отмеченные артикулы переедут в новый тип из старого (один артикул — одна коробка).</div>
+    <button onclick="submitNewBoxType()">создать тип</button>
+    <button class="box-btn" onclick="toggleBoxTypeForm()">закрыть</button>
+  </div>`;
+}
+function submitNewBoxType(){
+  const name=(document.getElementById('new-box-name').value||'').trim();
+  if(!name){ alert('Введите название типа коробки'); return; }
+  const arts=[...document.querySelectorAll('.new-box-art:checked')].map(c=>c.value);
+  if(!arts.length){ alert('Отметьте хотя бы один артикул для этого типа'); return; }
+  addBoxType(name,arts);
+}
+loadBoxTypes();
 const CLUSTER_GROUPS=[
   {name:'Центр',         clusters:['Москва, МО и Дальние регионы','Ярославль','Тверь','Воронеж','Саратов']},
   {name:'Северо-Запад',  clusters:['Санкт-Петербург и СЗО','Калининград']},
@@ -465,6 +545,7 @@ async function saveToCloud(){
     // Галочки товаров и список найденных артикулов — чтобы вид совпадал на всех устройствах
     record.hiddenArticles=[...getHiddenArticles()];
     record.allArticles=ALL_ARTICLES;
+    record.boxTypes=BOX_TYPES; // пользовательские типы коробок
 
     let body=JSON.stringify(record);
     // Защита от лимита JSONBin (100 КБ на free). Урезаем по нарастающей, пока не влезем:
@@ -538,6 +619,7 @@ async function loadFromCloud(){
     if(cloudIsNewer){
       if(Array.isArray(rec.allArticles)) rec.allArticles.forEach(a=>{ if(!ALL_ARTICLES.includes(a)) ALL_ARTICLES.push(a); });
       if(Array.isArray(rec.hiddenArticles)) localStorage.setItem(LS_HIDDEN_ARTICLES,JSON.stringify(rec.hiddenArticles));
+      if(Array.isArray(rec.boxTypes)&&rec.boxTypes.length){ localStorage.setItem(LS_BOX_TYPES,JSON.stringify(rec.boxTypes)); loadBoxTypes(); }
     }else{
       // локальный выбор свежее — но новые артикулы из облака всё равно добавим в список (это не сбрасывает галочки)
       if(Array.isArray(rec.allArticles)) rec.allArticles.forEach(a=>{ if(!ALL_ARTICLES.includes(a)) ALL_ARTICLES.push(a); });
@@ -1677,7 +1759,10 @@ function render(data){
       <div id="box-orders-${type}" style="margin-top:8px"></div>
     </div>`;
   }).join('');
-  html+=`<div class="section-label" style="margin-top:2rem">Остаток коробок</div>
+  html+=`<div class="section-label" style="margin-top:2rem;display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+    <span>Остаток коробок</span>
+    <span style="font-size:11px;font-family:var(--mono);color:var(--accent);cursor:pointer" onclick="toggleBoxTypeForm()">＋ тип коробки</span></div>
+  <div id="box-type-form" style="display:none"></div>
   <div class="boxes-grid">${boxCardsHtml}</div>`;
 
   // Heatmap
@@ -1845,6 +1930,8 @@ function applyCloudKey(){
       if(rawData){ populateClusterSelect(rawData); redraw();
         document.querySelectorAll('.period-tab').forEach(btn=>btn.classList.toggle('active',btn.textContent.trim()===currentPeriod+' дн')); }
       if(salesDaily) rebuildSalesFromDaily();
+      renderLog();   // показать «Лог загрузок» и при восстановлении из локала (без облака/VPN)
+      renderBoxes(); // и коробки тоже
     }
   }catch(e){ console.log('Восстановление из локала: часть рендера не удалась (возможно, нет связи с CDN):',e); }
   // Загружаем ключ из localStorage если был сохранён — облако догоняет и синхронизирует
@@ -1868,7 +1955,7 @@ function exportForClaude(){
   // Коробки
   lines.push('--- Коробки ---');
   ['a','b'].forEach(type=>{
-    const name = type==='a'?'Коробки 5.5 (тип A)':'Коробки с окошком (тип B)';
+    const name = (BOX_META[type]&&BOX_META[type].name)||type;
     const count = calcBoxCount(type);
     const log = getBoxLog();
     const inTransit = log.filter(e=>e.type===type&&e.kind==='order'&&(e.remaining||0)>0).reduce((s,e)=>s+(e.remaining||0),0);
@@ -1969,7 +2056,7 @@ function buildSnapshot(){
   }
 
   ['a','b'].forEach(type=>{
-    const name=type==='a'?'Коробки 5.5 (тип A)':'Коробки с окошком (тип B)';
+    const name=(BOX_META[type]&&BOX_META[type].name)||type;
     const count=calcBoxCount(type);
     const log=getBoxLog();
     const inTransit=log.filter(e=>e.type===type&&e.kind==='order'&&(e.remaining||0)>0).reduce((s,e)=>s+(e.remaining||0),0);
